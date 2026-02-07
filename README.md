@@ -1,31 +1,31 @@
 # nordvpn-macos-cli
 
-**NordVPN CLI for macOS** using OpenVPN. Since NordVPN doesn’t ship an official Mac CLI, this package gives you a `nordvpn` command that finds servers, downloads configs, and runs OpenVPN.
+**NordVPN CLI for macOS** using OpenVPN. NordVPN doesn’t ship an official Mac CLI—this gives you a `nordvpn` command to find servers, download configs, and run OpenVPN.
 
 ## Requirements
 
 - **macOS** (uses OpenVPN and pf; not tested on Linux/Windows)
 - **Python 3.8+**
 - **OpenVPN** (e.g. `brew install openvpn`)
-- **NordVPN “Service credentials”** from [Manual setup](https://my.nordaccount.com/dashboard/) (not your email/password)
+- **NordVPN service credentials** from [Manual setup](https://my.nordaccount.com/dashboard/) (not your NordAccount email/password)
 
 ## Install
 
 ```bash
-# From this repo (editable)
-pip install -e .
+# From GitHub:
+pip install git+https://github.com/lukerbs/nordvpn-macos-cli.git
 
-# Or from PyPI (when published)
-pip install nordvpn-cli
+# Or clone this repo and run:
+pip install -e .
 ```
 
-After install, the `nordvpn` command is available. You can also run from the repo without installing: `python -m nordvpn`.
+After install, the `nordvpn` command is available. You can also run without installing: `python -m nordvpn`.
 
-**Optional:** Run `nordvpn setup` once to configure passwordless sudo for OpenVPN and the firewall, so `nordvpn connect` and kill switch work without repeated password prompts.
+**Optional:** Run `nordvpn setup` once to configure passwordless sudo for OpenVPN and the firewall so `nordvpn connect` and kill switch work without repeated password prompts.
 
 ## Credentials
 
-Set these in your shell (e.g. in `~/.zshrc`). The library uses them automatically and will create `~/.nord-auth` from them on first connect (with secure permissions), so you only need to set the env vars once.
+Set these in your shell (e.g. in `~/.zshrc`). The CLI uses them on first connect and stores credentials in `~/.nord-auth` with secure permissions. You only need to set the env vars once.
 
 ```bash
 export NORD_USER="your_service_username"
@@ -38,7 +38,7 @@ Then run `source ~/.zshrc` (or open a new terminal).
 
 | Command | Description |
 |--------|-------------|
-| `nordvpn setup` | Configure passwordless sudo for openvpn and pfctl (one-time). |
+| `nordvpn setup` | Configure passwordless sudo for OpenVPN and pfctl (one-time). |
 | `nordvpn connect [COUNTRY]` | Connect to best server in country (default: US). |
 | `nordvpn connect --server HOSTNAME` | Connect to a **specific server** (e.g. `us9364` or `us9364.nordvpn.com`). |
 | `nordvpn connect --proto openvpn_tcp` | Use TCP instead of UDP (if UDP is blocked). |
@@ -60,7 +60,7 @@ Then run `source ~/.zshrc` (or open a new terminal).
 | `nordvpn settings --daemon enable` | Run OpenVPN in background by default. |
 | `nordvpn settings --daemon disable` | Run OpenVPN in foreground by default. |
 
-Settings are stored in `~/.nordvpn-config`. Daemon mode is **on by default** (background connect); use `--no-daemon` on `connect` or `rotate` to run in foreground. The menu bar icon (when enabled) shows 🔒/🔓 and lets you Connect (US) or Disconnect without opening a terminal. Notifications are off by default; enable with `nordvpn settings --notify enable`.
+Settings are stored in `~/.nordvpn-config`. Daemon mode is on by default (background connect); use `--no-daemon` on `connect` or `rotate` to run in the foreground. With the tray enabled, the menu bar icon shows 🔒/🔓 and lets you connect (US) or disconnect without a terminal. Notifications are off by default; enable with `nordvpn settings --notify enable`.
 
 ### Examples
 
@@ -87,21 +87,14 @@ nordvpn disconnect
 
 ## Kill switch (macOS)
 
-On macOS you can use `--killswitch` (or `-k`) to enable a firewall that blocks all traffic except the VPN tunnel and the VPN server. This uses the built-in **Packet Filter (pf)**.
+Use `--killswitch` (or `-k`) to enable a firewall that blocks all traffic except the VPN tunnel. This uses macOS’s built-in **Packet Filter (pf)**.
 
-The kill switch is **fail-closed**: if the script crashes, the terminal is closed, or the VPN drops, the firewall **stays on** and your internet stays blocked. That avoids leaking your real IP when the tunnel goes down.
+The kill switch is fail-closed: if the script crashes, the terminal closes, or the VPN drops, the firewall stays on and your internet stays blocked, so your real IP is not exposed.
 
 - **Enable:** `nordvpn connect --killswitch` (or add `-k` to any connect command).
-- **Disable:** Run `nordvpn disconnect` to turn off the firewall and stop OpenVPN.
-- **If you get stuck offline** (script crashed, etc.), restore internet with:
-  ```bash
-  sudo pfctl -d
-  ```
-  Memorize: **P**acket **F**ilter **D**isable. Alternatively, flush only the NordVPN anchor (keeps PF enabled): `sudo pfctl -a com.nordvpn.client -F all`. A reboot also clears pf rules.
+- **Disable:** `nordvpn disconnect` turns off the firewall and stops OpenVPN.
+- **Stuck offline** (e.g. after a crash): restore connectivity with `sudo pfctl -d` (Packet Filter disable). To flush only the NordVPN rules: `sudo pfctl -a com.nordvpn.client -F all`. A reboot also clears pf rules.
 
 ## License
 
 MIT.
-
-
-# REPO TO CHECK OUT: https://github.com/jotyGill/openpyn-nordvpn (could be good for inspiration / stealing some of their know-how)
