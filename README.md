@@ -1,4 +1,4 @@
-# nordvpn-cli
+# nordvpn-macos-cli
 
 **NordVPN CLI for macOS** using OpenVPN. Since NordVPN doesn’t ship an official Mac CLI, this package gives you a `nordvpn` command that finds servers, downloads configs, and runs OpenVPN.
 
