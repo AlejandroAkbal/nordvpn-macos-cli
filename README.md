@@ -21,6 +21,31 @@ pip install -e .
 
 After install, the `nordvpn` command is available. You can also run without installing: `python -m nordvpn`.
 
+### Local project setup with uv
+
+For this local checkout in `/Users/lume/Projects/nordvpn-operator`, use the project virtual environment created with `uv`:
+
+```bash
+uv venv .venv
+uv pip install -e .
+```
+
+Then either activate it:
+
+```bash
+source .venv/bin/activate
+python -m nordvpn status
+```
+
+Or run the CLI directly through the virtualenv without activation:
+
+```bash
+./.venv/bin/python -m nordvpn status
+./.venv/bin/python -m nordvpn list-countries
+```
+
+For this local project, prefer `./.venv/bin/python -m nordvpn ...` in docs, scripts, and assistant-operated workflows unless the virtualenv is already activated.
+
 **Optional:** Run `nordvpn setup` once to configure passwordless sudo for OpenVPN and the firewall so `nordvpn connect` and kill switch work without repeated password prompts.
 
 ## Credentials
@@ -33,6 +58,19 @@ export NORD_PASS="your_service_password"
 ```
 
 Then run `source ~/.zshrc` (or open a new terminal).
+
+For this local setup, you can also create `~/.nord-auth` directly if you already have the Nord manual setup service credentials. The file format is:
+
+```text
+service_username
+service_password
+```
+
+The file should be readable only by your user:
+
+```bash
+chmod 600 ~/.nord-auth
+```
 
 ## Usage
 

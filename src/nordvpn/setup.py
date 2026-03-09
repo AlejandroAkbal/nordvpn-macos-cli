@@ -28,18 +28,15 @@ def _current_user() -> str:
 
 
 def install_sudoers_rule() -> None:
-    """
-    Create a sudoers file so openvpn and pfctl can run without a password.
-    1. Resolve absolute paths for openvpn and pfctl.
-    2. Write a temporary sudoers fragment.
-    3. Validate with visudo -c -f.
-    4. Install to /etc/sudoers.d/nordvpn with correct permissions.
-    """
     print("🔧  Configuring passwordless access for VPN...")
 
     try:
         openvpn_bin = utils.resolve_binary("openvpn")
         pfctl_bin = utils.resolve_binary("pfctl")
+        cat_bin = utils.resolve_binary("cat")
+        kill_bin = utils.resolve_binary("kill")
+        pkill_bin = utils.resolve_binary("pkill")
+        rm_bin = utils.resolve_binary("rm")
     except RuntimeError as e:
         print(f"❌ {e}", file=sys.stderr)
         sys.exit(1)
@@ -49,9 +46,10 @@ def install_sudoers_rule() -> None:
         print("❌ Could not determine current username.", file=sys.stderr)
         sys.exit(1)
 
-    rule_content = f"{user} ALL=(ALL) NOPASSWD: {pfctl_bin}, {openvpn_bin}\n"
+    allowed_bins = [pfctl_bin, openvpn_bin, cat_bin, kill_bin, pkill_bin, rm_bin]
+    rule_content = f"{user} ALL=(ALL) NOPASSWD: {', '.join(allowed_bins)}\n"
     print(f"    User: {user}")
-    print(f"    Binaries: {pfctl_bin}, {openvpn_bin}")
+    print(f"    Binaries: {', '.join(allowed_bins)}")
 
     with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".sudoers") as tmp:
         tmp.write(rule_content)
@@ -65,11 +63,15 @@ def install_sudoers_rule() -> None:
             stderr=subprocess.DEVNULL,
         )
     except subprocess.CalledProcessError:
-        print("❌ Generated sudoers rule failed syntax check. Aborting.", file=sys.stderr)
+        print(
+            "❌ Generated sudoers rule failed syntax check. Aborting.", file=sys.stderr
+        )
         os.remove(tmp_path)
         sys.exit(1)
 
-    print("🔑  Installing permission file (you may be asked for your password one last time)...")
+    print(
+        "🔑  Installing permission file (you may be asked for your password one last time)..."
+    )
     try:
         subprocess.run(["sudo", "cp", tmp_path, SUDOERS_FILE], check=True)
         subprocess.run(["sudo", "chmod", "0440", SUDOERS_FILE], check=True)
@@ -84,15 +86,19 @@ def install_sudoers_rule() -> None:
 
 
 def check_sudo_access() -> bool:
-    """Return True if openvpn can be run with sudo without a password."""
     try:
-        openvpn_bin = utils.resolve_binary("openvpn")
-        subprocess.run(
-            ["sudo", "-n", openvpn_bin, "--version"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            check=True,
-        )
+        required_checks = [
+            [utils.resolve_binary("openvpn"), "--version"],
+            [utils.resolve_binary("pfctl"), "-s", "info"],
+            [utils.resolve_binary("pkill"), "-V"],
+        ]
+        for cmd in required_checks:
+            subprocess.run(
+                ["sudo", "-n", *cmd],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=True,
+            )
         return True
     except (subprocess.CalledProcessError, RuntimeError):
         return False
