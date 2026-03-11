@@ -14,6 +14,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "daemon_enabled": True,
     "last_rotate_country": "US",
     "last_rotate_hostname": "",
+    "last_rotate_protocol": "openvpn_udp",
+    "obfuscate_enabled": False,
 }
 
 

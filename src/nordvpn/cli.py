@@ -102,28 +102,46 @@ def _resolve_daemon(args: argparse.Namespace) -> bool:
     return bool(args.daemon)
 
 
+def _resolve_protocol(args: argparse.Namespace) -> str:
+    """Resolve effective protocol string, mapping --obfuscated to XOR variants."""
+    obfuscated = getattr(args, "obfuscated", False) or False
+    proto = getattr(args, "proto", "openvpn_udp") or "openvpn_udp"
+    if obfuscated:
+        return "openvpn_xor_udp" if "udp" in proto else "openvpn_xor_tcp"
+    return proto
+
+
 def _cmd_connect(args: argparse.Namespace) -> None:
     if openvpn.is_connected():
-        print("⚠️  OpenVPN is already running. Disconnect first (nordvpn disconnect).", file=sys.stderr)
+        print(
+            "⚠️  OpenVPN is already running. Disconnect first (nordvpn disconnect).",
+            file=sys.stderr,
+        )
         sys.exit(1)
     if not openvpn.has_auth():
-        print("❌ No credentials. Set NORD_USER and NORD_PASS in your shell, or create ~/.nord-auth", file=sys.stderr)
+        print(
+            "❌ No credentials. Set NORD_USER and NORD_PASS in your shell, or create ~/.nord-auth",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     _ensure_tray_running()
 
     daemon = _resolve_daemon(args)
+    effective_proto = _resolve_protocol(args)
 
     server: dict | None = None
     if args.server:
         print(f"🔎  Connecting to server: {args.server}")
     else:
         try:
-            server = api.get_recommendation(args.country, args.proto)
+            server = api.get_recommendation(args.country, effective_proto)
         except (ValueError, Exception) as e:
             print(f"❌ {e}", file=sys.stderr)
             sys.exit(1)
-        print(f"🔎  Best server in {args.country}: {server['hostname']} (load {server['load']}%)")
+        print(
+            f"🔎  Best server in {args.country}: {server['hostname']} (load {server['load']}%)"
+        )
 
     def _sigint_handler(sig: int, frame: object) -> None:
         if args.killswitch:
@@ -151,7 +169,7 @@ def _cmd_connect(args: argparse.Namespace) -> None:
     try:
         openvpn.connect(
             country_code=args.country,
-            protocol=args.proto,
+            protocol=effective_proto,
             daemon=daemon,
             server_hostname=args.server,
         )
@@ -166,10 +184,13 @@ def _cmd_connect(args: argparse.Namespace) -> None:
         sys.exit(1)
 
     if daemon and args.killswitch:
-        print("🛡️  Kill switch is ACTIVE in background. Run 'nordvpn disconnect' to disable.")
+        print(
+            "🛡️  Kill switch is ACTIVE in background. Run 'nordvpn disconnect' to disable."
+        )
 
-    # Persist for rotate: next time "rotate" will use this country and advance from this hostname
+    # Persist for rotate: next time "rotate" will use this country, hostname, and protocol
     config.set_setting("last_rotate_country", args.country)
+    config.set_setting("last_rotate_protocol", effective_proto)
     config.set_setting(
         "last_rotate_hostname",
         (server["hostname"] if server else (args.server or "")),
@@ -186,10 +207,18 @@ def _cmd_rotate(args: argparse.Namespace) -> None:
         time.sleep(1.0)  # Kernel releases utun device
 
     last_country = config.get_setting("last_rotate_country") or "US"
+    last_protocol = config.get_setting("last_rotate_protocol") or "openvpn_udp"
+
+    # --obfuscated on rotate overrides the stored protocol
+    obfuscated = getattr(args, "obfuscated", False) or False
+    if obfuscated:
+        last_protocol = (
+            "openvpn_xor_udp" if "udp" in last_protocol else "openvpn_xor_tcp"
+        )
 
     try:
         # Fetch a large pool to ensure we have enough options after filtering
-        servers = api.get_servers(last_country, protocol="openvpn_udp", limit=500)
+        servers = api.get_servers(last_country, protocol=last_protocol, limit=500)
     except (ValueError, Exception) as e:
         print(f"❌ {e}", file=sys.stderr)
         sys.exit(1)
@@ -202,7 +231,9 @@ def _cmd_rotate(args: argparse.Namespace) -> None:
     valid_servers = [s for s in servers if s.get("load", 100) <= args.max_load]
 
     if not valid_servers:
-        print(f"⚠️  All servers in {last_country} are above {args.max_load}% load. Using full list.")
+        print(
+            f"⚠️  All servers in {last_country} are above {args.max_load}% load. Using full list."
+        )
         valid_servers = servers
 
     # 2. Randomized Shuffle: Pick a random server from the valid pool
@@ -217,13 +248,16 @@ def _cmd_rotate(args: argparse.Namespace) -> None:
         firewall.enable_killswitch(next_server_ip)
         print(f"🔄  Atomic swap to: {next_hostname} ({next_server_ip})")
     else:
-        print(f"🔄  Rotating to: {next_hostname} (Load: {next_server.get('load')}% | Pool: {len(valid_servers)})")
+        print(
+            f"🔄  Rotating to: {next_hostname} (Load: {next_server.get('load')}% | Pool: {len(valid_servers)})"
+        )
 
     daemon = _resolve_daemon(args)
     rotate_args = argparse.Namespace(
         country=last_country,
         server=next_hostname,
-        proto="openvpn_udp",
+        proto=last_protocol,
+        obfuscated=False,  # protocol already resolved above; don't double-apply
         daemon=daemon,
         killswitch=args.killswitch,
     )
@@ -231,7 +265,7 @@ def _cmd_rotate(args: argparse.Namespace) -> None:
 
 
 def _cmd_settings(args: argparse.Namespace) -> None:
-    """Show or update CLI settings (tray, notifications, daemon)."""
+    """Show or update CLI settings (tray, notifications, daemon, obfuscate)."""
     changes_made = False
     if args.tray is not None:
         state = args.tray.lower() == "enable"
@@ -253,11 +287,22 @@ def _cmd_settings(args: argparse.Namespace) -> None:
         status = "ENABLED" if state else "DISABLED"
         print(f"✅  Daemon mode (background connect) is now: {status}")
         changes_made = True
+    if args.obfuscated is not None:
+        state = args.obfuscated.lower() == "enable"
+        config.set_setting("obfuscate_enabled", state)
+        status = "ENABLED" if state else "DISABLED"
+        print(f"✅  Obfuscated (XOR) mode is now: {status}")
+        if state:
+            print(
+                "   (CLI auto-downloads the required Tunnelblick-patched OpenVPN binary on first use)"
+            )
+        changes_made = True
     cfg = config.load_config()
     print("Current Settings:")
     print(f"  Tray Icon:     {'ENABLED' if cfg['tray_enabled'] else 'DISABLED'}")
     print(f"  Notifications: {'ENABLED' if cfg['notify_enabled'] else 'DISABLED'}")
     print(f"  Daemon Mode:   {'ENABLED' if cfg['daemon_enabled'] else 'DISABLED'}")
+    print(f"  Obfuscated:    {'ENABLED' if cfg['obfuscate_enabled'] else 'DISABLED'}")
 
 
 def _cmd_disconnect(_args: argparse.Namespace) -> None:
@@ -280,7 +325,12 @@ def _cmd_status(_args: argparse.Namespace) -> None:
     print("🌍  Public IP info:")
     try:
         curl_bin = utils.resolve_binary("curl")
-        r = subprocess.run([curl_bin, "-s", "ipinfo.io/json"], capture_output=True, text=True, timeout=10)
+        r = subprocess.run(
+            [curl_bin, "-s", "ipinfo.io/json"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
         if r.returncode == 0 and r.stdout:
             print(r.stdout)
         else:
@@ -292,15 +342,18 @@ def _cmd_status(_args: argparse.Namespace) -> None:
 
 
 def _cmd_list(args: argparse.Namespace) -> None:
+    effective_proto = _resolve_protocol(args)
     try:
-        servers = api.get_servers(args.country, args.proto, limit=args.limit)
+        servers = api.get_servers(args.country, effective_proto, limit=args.limit)
     except ValueError as e:
         print(f"❌ {e}", file=sys.stderr)
         sys.exit(1)
     # Prefer online only if API provides status
     if servers and "status" in servers[0]:
         servers = [s for s in servers if s.get("status") == "online"]
-    print(f"Servers in {args.country} ({args.proto}) — showing up to {args.limit}\n")
+    print(
+        f"Servers in {args.country} ({effective_proto}) — showing up to {args.limit}\n"
+    )
     for s in servers[: args.limit]:
         loc = s.get("locations") or []
         city = loc[0].get("city", "") if loc and isinstance(loc[0], dict) else ""
@@ -309,7 +362,7 @@ def _cmd_list(args: argparse.Namespace) -> None:
 
 
 def _cmd_setup(_args: argparse.Namespace) -> None:
-    """Configure passwordless sudo for openvpn and pfctl (recommended)."""
+    """Configure passwordless sudo for the managed OpenVPN binary and pfctl."""
     setup.install_sudoers_rule()
 
 
@@ -329,16 +382,24 @@ def main() -> None:
         prog="nordvpn",
         description="NordVPN CLI for macOS (OpenVPN). Connect, disconnect, status, list servers.",
     )
-    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
+    parser.add_argument(
+        "--version", action="version", version=f"%(prog)s {__version__}"
+    )
     sub = parser.add_subparsers(dest="command", required=True, help="command")
 
     # setup
-    p_setup = sub.add_parser("setup", help="Configure passwordless sudo for VPN (recommended)")
+    p_setup = sub.add_parser(
+        "setup", help="Configure passwordless sudo for VPN (recommended)"
+    )
     p_setup.set_defaults(func=_cmd_setup)
 
     # settings
     p_settings = sub.add_parser("settings", help="Configure CLI behavior")
-    p_settings.add_argument("--tray", choices=["enable", "disable"], help="Auto-launch menu bar icon on connect")
+    p_settings.add_argument(
+        "--tray",
+        choices=["enable", "disable"],
+        help="Auto-launch menu bar icon on connect",
+    )
     p_settings.add_argument(
         "--notify",
         choices=["enable", "disable"],
@@ -349,20 +410,59 @@ def main() -> None:
         choices=["enable", "disable"],
         help="Run OpenVPN in background by default (enable); use --no-daemon on connect/rotate to override",
     )
+    p_settings.add_argument(
+        "--obfuscated",
+        choices=["enable", "disable"],
+        help="Use XOR obfuscated servers by default (requires Tunnelblick-patched openvpn)",
+    )
     p_settings.set_defaults(func=_cmd_settings)
 
     # connect
-    p_connect = sub.add_parser("connect", help="Connect to VPN (default: best in US, UDP)")
-    p_connect.add_argument("country", nargs="?", default="US", help="2-letter country code when not using --server")
-    p_connect.add_argument(
-        "--server", "-s", metavar="HOSTNAME", help="Specific server (e.g. us9364 or us9364.nordvpn.com)"
+    p_connect = sub.add_parser(
+        "connect", help="Connect to VPN (default: best in US, UDP)"
     )
-    p_connect.add_argument("--proto", default="openvpn_udp", choices=["openvpn_udp", "openvpn_tcp"], help="Protocol")
-    p_connect.add_argument("--daemon", dest="daemon", action="store_true", help="Run OpenVPN in background (overrides settings)")
-    p_connect.add_argument("--no-daemon", dest="daemon", action="store_false", help="Run in foreground (overrides settings)")
+    p_connect.add_argument(
+        "country",
+        nargs="?",
+        default="US",
+        help="2-letter country code when not using --server",
+    )
+    p_connect.add_argument(
+        "--server",
+        "-s",
+        metavar="HOSTNAME",
+        help="Specific server (e.g. us9364 or us9364.nordvpn.com)",
+    )
+    p_connect.add_argument(
+        "--proto",
+        default="openvpn_udp",
+        choices=["openvpn_udp", "openvpn_tcp"],
+        help="Base protocol (UDP or TCP); combine with --obfuscated for XOR variants",
+    )
+    p_connect.add_argument(
+        "--obfuscated",
+        action="store_true",
+        default=False,
+        help="Use XOR obfuscated servers (requires Tunnelblick-patched openvpn)",
+    )
+    p_connect.add_argument(
+        "--daemon",
+        dest="daemon",
+        action="store_true",
+        help="Run OpenVPN in background (overrides settings)",
+    )
+    p_connect.add_argument(
+        "--no-daemon",
+        dest="daemon",
+        action="store_false",
+        help="Run in foreground (overrides settings)",
+    )
     p_connect.set_defaults(daemon=None)
     p_connect.add_argument(
-        "--killswitch", "-k", action="store_true", help="Enable pf firewall: block all traffic except VPN (macOS)"
+        "--killswitch",
+        "-k",
+        action="store_true",
+        help="Enable pf firewall: block all traffic except VPN (macOS)",
     )
     p_connect.set_defaults(func=_cmd_connect)
 
@@ -375,16 +475,37 @@ def main() -> None:
         "rotate",
         help="Connect to a random low-load server in the same country; disconnects first if connected",
     )
-    p_rotate.add_argument("--daemon", dest="daemon", action="store_true", help="Run OpenVPN in background (overrides settings)")
-    p_rotate.add_argument("--no-daemon", dest="daemon", action="store_false", help="Run in foreground (overrides settings)")
+    p_rotate.add_argument(
+        "--daemon",
+        dest="daemon",
+        action="store_true",
+        help="Run OpenVPN in background (overrides settings)",
+    )
+    p_rotate.add_argument(
+        "--no-daemon",
+        dest="daemon",
+        action="store_false",
+        help="Run in foreground (overrides settings)",
+    )
     p_rotate.set_defaults(daemon=None)
-    p_rotate.add_argument("--killswitch", "-k", action="store_true", help="Enable pf firewall (block all except VPN)")
+    p_rotate.add_argument(
+        "--killswitch",
+        "-k",
+        action="store_true",
+        help="Enable pf firewall (block all except VPN)",
+    )
     p_rotate.add_argument(
         "--max-load",
         type=int,
         default=70,
         metavar="PCT",
         help="Exclude servers above this load %% (default: 70); use full list if none pass",
+    )
+    p_rotate.add_argument(
+        "--obfuscated",
+        action="store_true",
+        default=False,
+        help="Override stored protocol to use XOR obfuscated servers for this rotation",
     )
     p_rotate.set_defaults(func=_cmd_rotate)
 
@@ -394,8 +515,18 @@ def main() -> None:
 
     # list
     p_list = sub.add_parser("list", help="List servers for a country")
-    p_list.add_argument("country", nargs="?", default="US", help="2-letter country code")
-    p_list.add_argument("--proto", default="openvpn_udp", choices=["openvpn_udp", "openvpn_tcp"])
+    p_list.add_argument(
+        "country", nargs="?", default="US", help="2-letter country code"
+    )
+    p_list.add_argument(
+        "--proto", default="openvpn_udp", choices=["openvpn_udp", "openvpn_tcp"]
+    )
+    p_list.add_argument(
+        "--obfuscated",
+        action="store_true",
+        default=False,
+        help="List XOR obfuscated servers instead",
+    )
     p_list.add_argument("--limit", type=int, default=20, help="Max servers to show")
     p_list.set_defaults(func=_cmd_list)
 

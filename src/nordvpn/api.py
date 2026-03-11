@@ -10,6 +10,7 @@ CONFIG_BASE_URL = "https://downloads.nordcdn.com/configs/files"
 
 DEFAULT_TIMEOUT = 10
 SERVERS_TIMEOUT = 30  # /servers can return large payloads on slow connections
+XOR_PROTOCOLS = frozenset({"openvpn_xor_udp", "openvpn_xor_tcp"})
 
 
 def _get(
@@ -54,19 +55,30 @@ def get_recommendation(
     protocol: str = "openvpn_udp",
 ) -> dict[str, Any]:
     """Get recommended server for country + protocol. Trust API sort order (no client-side load sorting). Raises on error."""
-    country_id = get_id_by_identifier("servers/countries", country_code, key_name="code")
+    country_id = get_id_by_identifier(
+        "servers/countries", country_code, key_name="code"
+    )
     if not country_id:
         raise ValueError(f"Country code '{country_code}' not found")
     tech_id = get_id_by_identifier("technologies", protocol, key_name="identifier")
     if not tech_id:
         raise ValueError(f"Protocol '{protocol}' not found")
 
-    params = {
-        "filters[country_id]": country_id,
-        "filters[servers_technologies][id]": tech_id,
-        "limit": 1,
-    }
-    data = _get("servers/recommendations", params=params)
+    if protocol in XOR_PROTOCOLS:
+        params = {
+            "filters[country_id]": country_id,
+            "filters[servers_technologies][id]": tech_id,
+            "limit": 100,
+        }
+        data = _get("servers", params=params, timeout=SERVERS_TIMEOUT)
+        data.sort(key=lambda server: server.get("load", float("inf")))
+    else:
+        params = {
+            "filters[country_id]": country_id,
+            "filters[servers_technologies][id]": tech_id,
+            "limit": 1,
+        }
+        data = _get("servers/recommendations", params=params)
     if not data:
         raise ValueError("No servers found matching criteria")
     return data[0]
@@ -78,7 +90,9 @@ def get_servers(
     limit: int = 500,
 ) -> list[dict[str, Any]]:
     """Get list of servers for country + protocol (for 'list' command)."""
-    country_id = get_id_by_identifier("servers/countries", country_code, key_name="code")
+    country_id = get_id_by_identifier(
+        "servers/countries", country_code, key_name="code"
+    )
     if not country_id:
         raise ValueError(f"Country code '{country_code}' not found")
     tech_id = get_id_by_identifier("technologies", protocol, key_name="identifier")

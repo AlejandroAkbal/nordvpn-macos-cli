@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tempfile
 
+from . import openvpn
 from . import utils
 
 SUDOERS_FILE = "/etc/sudoers.d/nordvpn"
@@ -27,11 +28,22 @@ def _current_user() -> str:
         return "root"
 
 
+def _allowed_openvpn_bins() -> list[str]:
+    bins = [openvpn.ensure_openvpn_binary()]
+    try:
+        system_openvpn = utils.resolve_binary("openvpn")
+    except RuntimeError:
+        system_openvpn = None
+    if system_openvpn and system_openvpn not in bins:
+        bins.append(system_openvpn)
+    return bins
+
+
 def install_sudoers_rule() -> None:
     print("🔧  Configuring passwordless access for VPN...")
 
     try:
-        openvpn_bin = utils.resolve_binary("openvpn")
+        openvpn_bins = _allowed_openvpn_bins()
         pfctl_bin = utils.resolve_binary("pfctl")
         cat_bin = utils.resolve_binary("cat")
         kill_bin = utils.resolve_binary("kill")
@@ -46,7 +58,7 @@ def install_sudoers_rule() -> None:
         print("❌ Could not determine current username.", file=sys.stderr)
         sys.exit(1)
 
-    allowed_bins = [pfctl_bin, openvpn_bin, cat_bin, kill_bin, pkill_bin, rm_bin]
+    allowed_bins = [pfctl_bin, *openvpn_bins, cat_bin, kill_bin, pkill_bin, rm_bin]
     rule_content = f"{user} ALL=(ALL) NOPASSWD: {', '.join(allowed_bins)}\n"
     print(f"    User: {user}")
     print(f"    Binaries: {', '.join(allowed_bins)}")
@@ -88,7 +100,7 @@ def install_sudoers_rule() -> None:
 def check_sudo_access() -> bool:
     try:
         required_checks = [
-            [utils.resolve_binary("openvpn"), "--version"],
+            [openvpn.ensure_openvpn_binary(), "--version"],
             [utils.resolve_binary("pfctl"), "-s", "info"],
             [utils.resolve_binary("pkill"), "-V"],
         ]
