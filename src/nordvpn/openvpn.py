@@ -6,7 +6,6 @@ import os
 import subprocess
 import sys
 import time
-from typing import Optional
 
 import requests
 
@@ -38,10 +37,12 @@ def download_config(hostname: str, protocol: str = "openvpn_udp") -> str:
                 return local_path
         except requests.RequestException:
             continue
-    raise RuntimeError(f"Could not download config for {hostname} (tried {len(urls)} URL paths)")
+    raise RuntimeError(
+        f"Could not download config for {hostname} (tried {len(urls)} URL paths)"
+    )
 
 
-def get_credentials() -> tuple[Optional[str], Optional[str]]:
+def get_credentials() -> tuple[str | None, str | None]:
     """Return (user, pass) from env NORD_USER/NORD_PASS, or (None, None)."""
     return (os.environ.get("NORD_USER"), os.environ.get("NORD_PASS"))
 
@@ -82,7 +83,7 @@ def connect(
     country_code: str = "US",
     protocol: str = "openvpn_udp",
     daemon: bool = False,
-    server_hostname: Optional[str] = None,
+    server_hostname: str | None = None,
 ) -> None:
     """
     Connect to VPN: either best server in country or a specific server.
@@ -103,7 +104,10 @@ def connect(
         cmd.extend(["--log", LOG_FILE])
 
     if not _ensure_auth_file():
-        print("❌ No credentials. Set NORD_USER and NORD_PASS in your shell.", file=sys.stderr)
+        print(
+            "❌ No credentials. Set NORD_USER and NORD_PASS in your shell.",
+            file=sys.stderr,
+        )
         sys.exit(1)
     cmd.extend(["--auth-user-pass", AUTH_FILE])
 
@@ -125,7 +129,7 @@ def connect(
         disconnect()
 
 
-def get_pid() -> Optional[str]:
+def get_pid() -> str | None:
     """Read PID from our PID file (written by OpenVPN). Returns None if missing or unreadable."""
     if not os.path.exists(PID_FILE):
         return None
@@ -171,7 +175,13 @@ def disconnect() -> None:
 
 
 def is_connected() -> bool:
-    """True if an openvpn process is running."""
+    """
+    True if an openvpn process is running.
+
+    NOTE: this is a process-existence check only. A running openvpn process
+    does NOT guarantee a usable tunnel. Use verify.verify_tunnel() after
+    connect (daemon mode) to confirm the tunnel is actually routing traffic.
+    """
     result = subprocess.run(
         ["pgrep", "-x", "openvpn"],
         capture_output=True,

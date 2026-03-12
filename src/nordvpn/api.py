@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import requests
-from typing import Any, Optional
+from typing import Any
 
 NORD_API_BASE = "https://api.nordvpn.com/v1"
 CONFIG_BASE_URL = "https://downloads.nordcdn.com/configs/files"
@@ -14,8 +14,8 @@ SERVERS_TIMEOUT = 30  # /servers can return large payloads on slow connections
 
 def _get(
     endpoint: str,
-    params: Optional[dict[str, Any]] = None,
-    timeout: Optional[int] = None,
+    params: dict[str, Any] | None = None,
+    timeout: int | None = None,
 ) -> Any:
     t = timeout if timeout is not None else DEFAULT_TIMEOUT
     resp = requests.get(f"{NORD_API_BASE}/{endpoint}", params=params, timeout=t)
@@ -37,7 +37,7 @@ def get_id_by_identifier(
     endpoint: str,
     identifier: str,
     key_name: str = "code",
-) -> Optional[int]:
+) -> int | None:
     """Resolve country code or protocol identifier to Nord API id."""
     data = _get(endpoint)
     for item in data:
@@ -49,17 +49,26 @@ def get_id_by_identifier(
     return None
 
 
+def _resolve_ids(country_code: str, protocol: str) -> tuple[int, int]:
+    country_id = get_id_by_identifier(
+        "servers/countries", country_code, key_name="code"
+    )
+    if not country_id:
+        raise ValueError(f"Country code '{country_code}' not found")
+
+    tech_id = get_id_by_identifier("technologies", protocol, key_name="identifier")
+    if not tech_id:
+        raise ValueError(f"Protocol '{protocol}' not found")
+
+    return country_id, tech_id
+
+
 def get_recommendation(
     country_code: str = "US",
     protocol: str = "openvpn_udp",
 ) -> dict[str, Any]:
     """Get recommended server for country + protocol. Trust API sort order (no client-side load sorting). Raises on error."""
-    country_id = get_id_by_identifier("servers/countries", country_code, key_name="code")
-    if not country_id:
-        raise ValueError(f"Country code '{country_code}' not found")
-    tech_id = get_id_by_identifier("technologies", protocol, key_name="identifier")
-    if not tech_id:
-        raise ValueError(f"Protocol '{protocol}' not found")
+    country_id, tech_id = _resolve_ids(country_code, protocol)
 
     params = {
         "filters[country_id]": country_id,
@@ -78,12 +87,7 @@ def get_servers(
     limit: int = 500,
 ) -> list[dict[str, Any]]:
     """Get list of servers for country + protocol (for 'list' command)."""
-    country_id = get_id_by_identifier("servers/countries", country_code, key_name="code")
-    if not country_id:
-        raise ValueError(f"Country code '{country_code}' not found")
-    tech_id = get_id_by_identifier("technologies", protocol, key_name="identifier")
-    if not tech_id:
-        raise ValueError(f"Protocol '{protocol}' not found")
+    country_id, tech_id = _resolve_ids(country_code, protocol)
 
     params = {
         "filters[country_id]": country_id,

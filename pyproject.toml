@@ -39,3 +39,8 @@ nordvpn = "nordvpn.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.pytest.ini_options]
+markers = [
+    "e2e: real end-to-end tests against live NordVPN/OpenVPN",
+]
