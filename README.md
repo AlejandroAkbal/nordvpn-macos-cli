@@ -87,7 +87,7 @@ chmod 600 ~/.nord-auth
 | `nordvpn rotate` | Connect to a random low-load server in the same country; disconnects first if connected. |
 | `nordvpn rotate --killswitch` | Same as rotate, with kill switch (atomic server swap). |
 | `nordvpn rotate --max-load N` | Exclude servers above N% load (default: 70). |
-| `nordvpn status` | Show connected/disconnected and public IP info. |
+| `nordvpn status` | Show process state, public IP info, and country verification result. |
 | `nordvpn list [COUNTRY]` | List servers for country (`--limit N`, `--proto openvpn_udp` or `openvpn_tcp`). |
 | `nordvpn list-countries` | List country codes. |
 | `nordvpn settings` | Show current settings (tray, notifications, daemon). |
@@ -99,6 +99,23 @@ chmod 600 ~/.nord-auth
 | `nordvpn settings --daemon disable` | Run OpenVPN in foreground by default. |
 
 Settings are stored in `~/.nordvpn-config`. Daemon mode is on by default (background connect); use `--no-daemon` on `connect` or `rotate` to run in the foreground. With the tray enabled, the menu bar icon shows 🔒/🔓 and lets you connect (US) or disconnect without a terminal. Notifications are off by default; enable with `nordvpn settings --notify enable`.
+
+## Country verification behavior
+
+When connecting in daemon mode, tunnel verification checks your post-connect public IP with multiple geolocation providers and uses a **majority vote** for country confirmation.
+
+Typical outcomes:
+
+- `Tunnel verified` → country confirmed by provider majority.
+- `Country mismatch` → provider majority points to a different country.
+- `Country unconfirmed` → providers disagree and no majority can confirm the requested country.
+- `country check unavailable` → expected for explicit `--server` connects where no country target is scoped.
+
+Notes:
+
+- VPN exit IP geolocation can differ by provider, especially for VPN infrastructure and virtualized exits.
+- `nordvpn status` reports the current verification state and observed public IP details.
+- `connect` may return non-zero for mismatch/unconfirmed outcomes even if an OpenVPN process is running.
 
 ### Examples
 
